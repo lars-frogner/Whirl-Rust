@@ -1,31 +1,43 @@
 //! Initialization of the fluid state.
 
-pub mod grid;
-pub mod rest;
+pub mod energy;
+pub mod mass;
+pub mod velocity;
 
-use crate::{kernel::Kernel, num::fvar};
+use crate::num::fvar;
 
-/// Initial 1D distribution of fluid mass.
-pub trait InitialMassDistribution1D {
-    /// Computes the fluid state corresponding to this initial mass distribition.
-    fn compute_state<K: Kernel>(&self, kernel: &K) -> MassDistributionState1D;
-}
+fn search_idx_of_coord(lower_edges: &[fvar], coord: fvar) -> Option<usize> {
+    let mut low = 0;
+    let mut high = lower_edges.len() - 1;
+    let mut mid;
 
-pub trait InitialVelocityDistribution1D {
-    /// Computes the fluid particle velocities corresponding to this initial velocity
-    /// distribution, for the given mass distribution state.
-    fn compute_velocities(&self, mass_distribution_state: &MassDistributionState1D) -> Vec<fvar>;
-}
+    if coord >= lower_edges[high] {
+        return Some(high);
+    }
 
-/// Fluid state associated with an initial mass distribution.
-#[derive(Clone, Debug)]
-pub struct MassDistributionState1D {
-    /// Mass of the fluid particles.
-    pub particle_mass: fvar,
-    /// Fluid particle positions.
-    pub positions: Vec<fvar>,
-    /// Fluid particle smoothing kernel widths.
-    pub kernel_widths: Vec<fvar>,
-    /// Fluid particle mass densities.
-    pub mass_densities: Vec<fvar>,
+    while coord >= lower_edges[low] && coord < lower_edges[high] {
+        let low_float = low as fvar;
+        let high_float = high as fvar;
+        let mid_float = (low_float
+            + (coord - lower_edges[low]) * (high_float - low_float)
+                / (lower_edges[high] - lower_edges[low]))
+            .floor();
+
+        mid = mid_float as usize;
+
+        if mid >= high {
+            // Due to roundoff error, we might get `mid == high` even though `coord < lower_edges[high]`.
+            // If this happens, `coord` will be very close to `lower_edges[high]`, so we return `high - 1`.
+            return Some(high - 1);
+        }
+
+        if lower_edges[mid + 1] <= coord {
+            low = mid + 1
+        } else if lower_edges[mid] > coord {
+            high = mid
+        } else {
+            return Some(mid);
+        }
+    }
+    None
 }
