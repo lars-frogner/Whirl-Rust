@@ -1,0 +1,19 @@
+[package]
+name = "python-whirl"
+version = "0.1.0"
+authors = ["Lars Frogner <lars_frogner@hotmail.com>"]
+edition = "2018"
+
+[lib]
+name = "whirl"
+crate-type = ["cdylib"]
+
+[dependencies]
+whirl = { path = "../" }
+#pyo3 = { version = "0.9.0-alpha.1", features = ["extension-module"] }
+#numpy = { git = "https://github.com/PyO3/rust-numpy", branch = "v0.8.0" }
+pyo3 = { version = "0.8", features = ["extension-module"] }
+numpy = "0.7.0"
+
+[package.metadata.maturin]
+requires-dist = ["numpy>=1.14"]
