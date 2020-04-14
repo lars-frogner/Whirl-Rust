@@ -2,51 +2,50 @@
 
 use super::Kernel;
 use crate::{
-    geometry::Dimensionality,
+    geometry::dim::*,
     num::{fvar, PI},
 };
+use std::marker::PhantomData;
 
 /// Gaussian smoothing kernel.
 #[derive(Clone, Debug)]
-pub struct GaussianKernel {
-    dimensionality: Dimensionality,
-    dimensions: i32,
+pub struct GaussianKernel<D: Dim> {
     sigma: fvar,
+    _phantom: PhantomData<D>,
 }
 
-impl GaussianKernel {
+impl<D: Dim> GaussianKernel<D> {
     /// Creates a new Gaussian smoothing kernel with the given dimensionality.
-    pub fn new(dimensionality: Dimensionality) -> Self {
-        let dimensions = dimensionality.number() as i32;
-        let sigma = match dimensionality {
+    pub fn new() -> Self {
+        let sigma = match D::dimensionality() {
             Dimensionality::One => 1.0 / fvar::sqrt(PI),
             Dimensionality::Two => 1.0 / PI,
             Dimensionality::Three => 1.0 / (PI * fvar::sqrt(PI)),
         };
         Self {
-            dimensionality,
-            dimensions,
             sigma,
+            _phantom: PhantomData,
         }
     }
 }
 
-impl Kernel for GaussianKernel {
+impl<D: Dim> Kernel<D> for GaussianKernel<D> {
     fn is_nonzero(_q: fvar) -> bool {
         true
     }
 
-    fn dimensionality(&self) -> Dimensionality {
-        self.dimensionality
-    }
-
     fn evaluate(&self, q: fvar, h: fvar) -> fvar {
         debug_assert!(h > 0.0, "Non-positive kernel width: {}", h);
-        self.sigma * fvar::exp(-q * q) / fvar::powi(h, self.dimensions)
+        self.sigma * fvar::exp(-q * q) / fvar::powi(h, D::dim() as i32)
     }
 
-    fn gradient(&self, q: fvar, h: fvar) -> fvar {
+    fn distance_derivative(&self, q: fvar, h: fvar) -> fvar {
         debug_assert!(h > 0.0, "Non-positive kernel width: {}", h);
-        -2.0 * q * self.sigma * fvar::exp(-q * q) / fvar::powi(h, self.dimensions + 1)
+        -2.0 * q * self.evaluate(q, h) / h
+    }
+
+    fn width_derivative(&self, q: fvar, h: fvar) -> fvar {
+        debug_assert!(h > 0.0, "Non-positive kernel width: {}", h);
+        (2.0 * q * q - (D::dim() as fvar)) * self.evaluate(q, h) / h
     }
 }
