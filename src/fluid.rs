@@ -1,26 +1,35 @@
 //! State and dynamics of a fluid.
 
-pub mod isothermal;
+pub mod inviscid;
+pub mod inviscid_isothermal;
 
-use crate::{eos::EquationOfState, kernel::Kernel, num::fvar};
+use crate::{eos::EquationOfState, geometry::dim::*, kernel::Kernel, num::fvar};
 use itertools::izip;
-
-/// Positions of the fluid particles.
-pub trait ParticlePositions {}
-
-/// Velocities of the fluid particles.
-pub trait ParticleVelocities {}
 
 /// Time derivatives of the primary fluid variables.
 ///
 /// This does not include velocity, since it is itself a primary variable.
-pub trait TimeDerivatives {}
+pub trait TimeDerivatives<D: Dim> {}
+
+/// Positions of the fluid particles.
+pub type ParticlePositions<D> = Vec<Point<D>>;
+
+/// Velocities of the fluid particles.
+pub type ParticleVelocities<D> = Vec<Vector<D>>;
+
+pub type ParticlePositions1D = ParticlePositions<OneDim>;
+pub type ParticleVelocities1D = ParticleVelocities<OneDim>;
+pub type ParticlePositions2D = ParticlePositions<TwoDim>;
+pub type ParticleVelocities2D = ParticleVelocities<TwoDim>;
+pub type ParticlePositions3D = ParticlePositions<ThreeDim>;
+pub type ParticleVelocities3D = ParticleVelocities<ThreeDim>;
 
 /// State of a fluid.
-pub trait Fluid {
-    type Positions: ParticlePositions;
-    type Velocities: ParticlePositions;
-    type TimeDerivatives: TimeDerivatives;
+pub trait Fluid<D: Dim>
+where
+    DefaultAllocator: Allocator<D>,
+{
+    type TimeDerivatives: TimeDerivatives<D>;
 
     /// Returns the number of particles making up the fluid.
     fn number_of_particles(&self) -> usize;
@@ -29,10 +38,10 @@ pub trait Fluid {
     fn particle_mass(&self) -> fvar;
 
     /// Returns a reference to the positions of the fluid particles.
-    fn positions(&self) -> &Self::Positions;
+    fn positions(&self) -> &ParticlePositions<D>;
 
     /// Returns a  reference to the velocities of the fluid particles.
-    fn velocities(&self) -> &Self::Velocities;
+    fn velocities(&self) -> &ParticleVelocities<D>;
 
     /// Returns a slice with the widths of the particle smoothing kernels.
     fn kernel_widths(&self) -> &[fvar];
@@ -40,40 +49,30 @@ pub trait Fluid {
     /// Returns a slice with the mass densities of the fluid particles.
     fn mass_densities(&self) -> &[fvar];
 
-    /// Computes the time derivatives of the primary variables.
-    fn compute_time_derivatives<E, K>(
-        &self,
-        equation_of_state: &E,
-        kernel: &K,
-    ) -> Self::TimeDerivatives
-    where
-        E: EquationOfState,
-        K: Kernel;
+    /// Returns a slice with the energies per mass of the fluid particles.
+    fn specific_energies(&self) -> &[fvar];
 
-    /// Updates properties that only depend on the current configuration of particle positions.
-    fn update_static_properties<K: Kernel>(&mut self, kernel: &K);
+    /// Returns a slice with the gas pressures of the fluid particles.
+    fn gas_pressures(&self) -> &[fvar];
 
-    /// Updates the given set of time derivatives of the primary variables.
-    ///
-    /// `update_static_properties` should always be called prior to this method,
-    /// as the time derivatives in general depend on the static properties.
-    fn update_time_derivatives<E, K>(
-        &self,
-        equation_of_state: &E,
+    /// Updates properties and derivatives based on the current configuration of particles.
+    fn update<EOS, K>(
+        &mut self,
+        equation_of_state: &EOS,
         kernel: &K,
         time_derivatives: &mut Self::TimeDerivatives,
     ) where
-        E: EquationOfState,
-        K: Kernel;
+        EOS: EquationOfState,
+        K: Kernel<D>;
 
     /// Evolves the primary variables for the given time step using the given linear combination
     /// of time derivatives.
     ///
     /// Position is not modified, since the velocity describing its evolution is a primary variable.
     /// Positions should be evolved separately using the `evolve_positions` method.
-    fn evolve_primary_variables<'a, D>(&'a mut self, weighted_time_derivatives: D, time_step: fvar)
+    fn evolve_primary_variables<'a, T>(&'a mut self, weighted_time_derivatives: T, time_step: fvar)
     where
-        D: IntoIterator<Item = (fvar, &'a Self::TimeDerivatives)>;
+        T: IntoIterator<Item = (fvar, &'a Self::TimeDerivatives)>;
 
     /// Evolves positions for the given time step using the given linear combination of velocities.
     fn evolve_positions<'a, V>(
@@ -82,17 +81,21 @@ pub trait Fluid {
         additional_weighted_velocities: V,
         time_step: fvar,
     ) where
-        V: IntoIterator<Item = (fvar, &'a Self::Velocities)>;
+        V: IntoIterator<Item = (fvar, &'a ParticleVelocities<D>)>;
 }
 
-/// Computes the mass densities of the fluid particles with the given
-/// masses, 1D positions and kernels.
-pub fn compute_mass_densities_1d<K: Kernel>(
-    particle_mass: fvar,
-    positions: &[fvar],
-    kernel_widths: &[fvar],
+pub fn update_particle_volumes<D: Dim, K: Kernel<D>>(
     kernel: &K,
-) -> Vec<fvar> {
+    particle_mass: fvar,
+    coupling_constant: fvar,
+    tolerance: fvar,
+    positions: &ParticlePositions<D>,
+    kernel_widths: &mut [fvar],
+    mass_densities: &mut [fvar],
+    correction_scales: &mut [fvar],
+) where
+    DefaultAllocator: Allocator<D>,
+{
     debug_assert!(
         particle_mass > 0.0,
         "Non-positive particle mass: {}",
@@ -103,29 +106,71 @@ pub fn compute_mass_densities_1d<K: Kernel>(
         kernel_widths.len(),
         "Inconsistent number of particles"
     );
-    kernel.debug_assert_1d();
+    debug_assert_eq!(
+        positions.len(),
+        mass_densities.len(),
+        "Inconsistent number of particles"
+    );
+    debug_assert_eq!(
+        positions.len(),
+        correction_scales.len(),
+        "Inconsistent number of particles"
+    );
 
-    let n = kernel_widths.len();
-    let mut mass_densities = vec![0.0; n];
+    let dimensions = D::dim();
+    let dimensions_i32 = dimensions as i32;
+    let dimensions_fvar = dimensions as fvar;
 
-    for i in 0..n {
-        let (&r_a, r_upper) = positions.split_at(i).1.split_first().unwrap();
-        let (&h_a, h_upper) = kernel_widths.split_at(i).1.split_first().unwrap();
+    for (r_a, h_a, rho_a, omega_a) in
+        izip!(positions, kernel_widths, mass_densities, correction_scales)
+    {
+        debug_assert!(*h_a > 0.0, "Non-positive kernel width: {}", *h_a);
+        let mut h = *h_a;
+        let mut rho;
+        let mut omega;
 
-        let (rho_a, rho_upper) = mass_densities.split_at_mut(i).1.split_first_mut().unwrap();
+        loop {
+            rho = 0.0;
+            omega = 0.0;
 
-        for (&r_b, &h_b, rho_b) in izip!(r_upper, h_upper, rho_upper) {
-            let r_ab = r_a - r_b;
-            let h_ab = 0.5 * (h_a + h_b);
-            let q = r_ab / h_ab;
-            if K::is_nonzero(q) {
-                let w_ab = kernel.evaluate(q, h_ab);
-                let rho_a_term = particle_mass * w_ab;
-                *rho_a += rho_a_term;
-                *rho_b += rho_a_term;
+            for r_b in positions {
+                let r_ab = (r_a - r_b).norm();
+                let q = r_ab / h;
+                if K::is_nonzero(q) {
+                    rho += kernel.evaluate(q, h);
+                    omega += kernel.width_derivative(q, h);
+                }
+            }
+            rho *= particle_mass;
+            omega = 1.0 + omega * particle_mass * h / (dimensions_fvar * rho);
+
+            let zeta = particle_mass * fvar::powi(coupling_constant / h, dimensions_i32) - rho;
+            let h_perturbation = fvar::min(
+                fvar::max(zeta / (dimensions_fvar * rho * omega), -0.99),
+                0.99,
+            );
+
+            h *= 1.0 + h_perturbation;
+
+            if fvar::abs(h_perturbation) < tolerance {
+                break;
             }
         }
-    }
 
+        *h_a = h;
+        *rho_a = rho;
+        *omega_a = omega;
+    }
+}
+
+pub fn compute_initial_kernel_widths<D: Dim>(
+    particle_mass: fvar,
+    coupling_constant: fvar,
+    mass_densities: &[fvar],
+) -> Vec<fvar> {
+    let exponent = 1.0 / (D::dim() as fvar);
     mass_densities
+        .iter()
+        .map(|&rho| coupling_constant * fvar::powf(particle_mass / rho, exponent))
+        .collect()
 }
