@@ -1,9 +1,10 @@
 //! Initial piecewise uniform energy distribution.
 
-use super::{super::mass::MassDistributionState, InitialEnergyDistribution};
+use super::InitialEnergyDistribution;
 use crate::{
     eos::EquationOfState,
     error::{WhirlError, WhirlResult},
+    fluid::ParticlePositions,
     geometry::dim::*,
     num::fvar,
 };
@@ -74,11 +75,12 @@ impl PiecewiseUniformEnergyDistribution1D {
 impl InitialEnergyDistribution<OneDim> for PiecewiseUniformEnergyDistribution1D {
     fn compute_specific_energies<EOS: EquationOfState>(
         &self,
-        mass_distribution_state: &MassDistributionState<OneDim>,
+        positions: &ParticlePositions<OneDim>,
+        mass_densities: &[fvar],
         _equation_of_state: &EOS,
     ) -> Vec<fvar> {
-        mass_distribution_state
-            .positions
+        debug_assert_eq!(positions.len(), mass_densities.len());
+        positions
             .iter()
             .map(|position| self.specific_energy(point_to_scalar(position)))
             .collect()

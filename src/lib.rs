@@ -3,6 +3,7 @@
 pub mod eos;
 pub mod error;
 pub mod fluid;
+pub mod fluid2;
 pub mod geometry;
 pub mod initial;
 pub mod kernel;

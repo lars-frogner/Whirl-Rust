@@ -1,9 +1,10 @@
 //! Initial isothermal energy distribution.
 
-use super::{super::mass::MassDistributionState, InitialEnergyDistribution};
+use super::InitialEnergyDistribution;
 use crate::{
     eos::EquationOfState,
     error::{WhirlError, WhirlResult},
+    fluid::ParticlePositions,
     geometry::dim::*,
     num::fvar,
 };
@@ -38,12 +39,11 @@ where
 {
     fn compute_specific_energies<EOS: EquationOfState>(
         &self,
-        mass_distribution_state: &MassDistributionState<D>,
+        positions: &ParticlePositions<D>,
+        mass_densities: &[fvar],
         equation_of_state: &EOS,
     ) -> Vec<fvar> {
-        vec![
-            equation_of_state.compute_specific_energy(self.temperature);
-            mass_distribution_state.mass_densities.len()
-        ]
+        debug_assert_eq!(positions.len(), mass_densities.len());
+        vec![equation_of_state.compute_specific_energy(self.temperature); positions.len()]
     }
 }

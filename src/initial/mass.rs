@@ -10,7 +10,11 @@ where
     DefaultAllocator: Allocator<D>,
 {
     /// Computes the fluid state corresponding to this initial mass distribition.
-    fn compute_state<K: Kernel<D>>(&self, kernel: &K) -> MassDistributionState<D>;
+    fn compute_state<M: MassBehavior, K: Kernel<D>>(
+        &self,
+        mass_behavior: &M,
+        kernel: &K,
+    ) -> (ParticlePositions<D>, MassDistributionState<D>);
 }
 
 /// Fluid state associated with an initial mass distribution.
@@ -21,8 +25,6 @@ where
 {
     /// Mass of the fluid particles.
     pub particle_mass: fvar,
-    /// Scaling for the kernel widths (typically between 1.2 and 1.5).
-    pub coupling_constant: fvar,
     /// Fluid particle positions.
     pub positions: ParticlePositions<D>,
     /// Fluid particle smoothing kernel widths.

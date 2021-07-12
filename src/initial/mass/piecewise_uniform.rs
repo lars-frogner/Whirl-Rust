@@ -120,7 +120,6 @@ impl InitialMassDistribution<OneDim> for PiecewiseUniformMassDistribution1D {
 
         MassDistributionState {
             particle_mass,
-            coupling_constant: self.coupling_constant,
             positions,
             kernel_widths,
             mass_densities,

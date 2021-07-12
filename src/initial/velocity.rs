@@ -2,8 +2,11 @@
 
 pub mod rest;
 
-use super::mass::MassDistributionState;
-use crate::{fluid::ParticleVelocities, geometry::dim::*};
+use crate::{
+    fluid::{ParticlePositions, ParticleVelocities},
+    geometry::dim::*,
+    num::fvar,
+};
 
 /// Initial distribution of fluid velocity.
 pub trait InitialVelocityDistribution<D: Dim>
@@ -11,9 +14,10 @@ where
     DefaultAllocator: Allocator<D>,
 {
     /// Computes the fluid particle velocities corresponding to this initial velocity
-    /// distribution, for the given mass distribution state.
+    /// distribution, for the given positions and mass densities.
     fn compute_velocities(
         &self,
-        mass_distribution_state: &MassDistributionState<D>,
+        positions: &ParticlePositions<D>,
+        mass_densities: &[fvar],
     ) -> ParticleVelocities<D>;
 }
